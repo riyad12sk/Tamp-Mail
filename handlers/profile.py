@@ -1,23 +1,57 @@
 from telegram import Update
 from telegram.ext import ContextTypes
-from database.db import pool
+
+from database.db import pool, get_user
+from keyboards.buttons import back_menu
+from utils import esc, fmt_time, safe_edit, DIVIDER
+
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE, from_callback=False):
     uid = update.effective_user.id
-    row = await pool().fetchrow("SELECT first_name,username,created_at,language FROM users WHERE telegram_id=$1", uid)
+    row = await get_user(uid)
     count = await pool().fetchval("SELECT COUNT(*) FROM email_accounts WHERE telegram_id=$1", uid)
-    text = f"👤 Profile\\nName: {row['first_name'] or '-'}\\nUsername: @{row['username'] or '-'}\\nEmails created: {count}\\nLanguage: {row['language']}"
+    lang = row["language"] if row else "en"
+
+    name = esc(row["first_name"]) if row and row["first_name"] else "-"
+    username = f"@{esc(row['username'])}" if row and row["username"] else "-"
+    joined = fmt_time(row["created_at"]) if row else "-"
+
+    text = (
+        "👤 <b>প্রোফাইল</b>\n" + DIVIDER +
+        f"\n🆔 আইডি: <code>{uid}</code>"
+        f"\n📛 নাম: {name}"
+        f"\n🔗 ইউজারনেম: {username}"
+        f"\n✉️ মোট ইমেইল তৈরি: <b>{count}</b>"
+        f"\n🌐 ভাষা: {lang.upper()}"
+        f"\n📅 যুক্ত হয়েছেন: {joined}"
+    )
+
     if from_callback:
-        await update.callback_query.message.reply_text(text)
+        await safe_edit(update.callback_query, text, reply_markup=back_menu(lang))
     else:
-        await update.effective_message.reply_text(text)
+        await update.effective_message.reply_text(text, reply_markup=back_menu(lang), parse_mode="HTML")
+
 
 async def statistics(update: Update, context: ContextTypes.DEFAULT_TYPE, from_callback=False):
     uid = update.effective_user.id
+    row = await get_user(uid)
+    lang = row["language"] if row else "en"
     emails = await pool().fetchval("SELECT COUNT(*) FROM email_accounts WHERE telegram_id=$1", uid)
-    messages = await pool().fetchval("""SELECT COUNT(*) FROM messages m JOIN email_accounts e ON e.id=m.account_id WHERE e.telegram_id=$1""", uid)
-    text = f"📊 Your statistics\\nEmails generated: {emails}\\nMessages received: {messages}"
+    active = await pool().fetchval(
+        "SELECT COUNT(*) FROM email_accounts WHERE telegram_id=$1 AND is_active=TRUE", uid
+    )
+    messages = await pool().fetchval(
+        "SELECT COUNT(*) FROM messages m JOIN email_accounts e ON e.id=m.account_id WHERE e.telegram_id=$1", uid
+    )
+
+    text = (
+        "📊 <b>পরিসংখ্যান</b>\n" + DIVIDER +
+        f"\n✉️ মোট ইমেইল তৈরি: <b>{emails}</b>"
+        f"\n🟢 সক্রিয় ইমেইল: <b>{active}</b>"
+        f"\n📨 মোট মেসেজ গ্রহণ: <b>{messages}</b>"
+    )
+
     if from_callback:
-        await update.callback_query.message.reply_text(text)
+        await safe_edit(update.callback_query, text, reply_markup=back_menu(lang))
     else:
-        await update.effective_message.reply_text(text)
+        await update.effective_message.reply_text(text, reply_markup=back_menu(lang), parse_mode="HTML")

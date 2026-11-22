@@ -1,12 +1,8 @@
+
 import asyncpg
 from config import settings
 
 _pool = None
-
-
-# ==============================
-# DATABASE SCHEMA
-# ==============================
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -33,6 +29,9 @@ CREATE TABLE IF NOT EXISTS email_accounts (
 CREATE INDEX IF NOT EXISTS idx_email_accounts_active
 ON email_accounts(is_active);
 
+CREATE INDEX IF NOT EXISTS idx_email_accounts_user
+ON email_accounts(telegram_id);
+
 CREATE TABLE IF NOT EXISTS messages (
     id BIGSERIAL PRIMARY KEY,
     account_id BIGINT NOT NULL
@@ -55,10 +54,6 @@ CREATE TABLE IF NOT EXISTS activity_logs (
 """
 
 
-# ==============================
-# DATABASE INITIALIZATION
-# ==============================
-
 async def init_db():
     global _pool
 
@@ -75,13 +70,13 @@ async def init_db():
         command_timeout=30
     )
 
-    async with _pool.acquire() as conn:
-        await conn.execute(SCHEMA)
+    try:
+        async with _pool.acquire() as conn:
+            await conn.execute(SCHEMA)
+    except Exception:
+        await close_db()
+        raise
 
-
-# ==============================
-# DATABASE SHUTDOWN
-# ==============================
 
 async def close_db():
     global _pool
@@ -91,24 +86,67 @@ async def close_db():
         _pool = None
 
 
-# ==============================
-# DATABASE POOL
-# ==============================
-
 def pool():
     if _pool is None:
-        raise RuntimeError(
-            "Database pool is not initialized."
-        )
+        raise RuntimeError("Database pool is not initialized.")
 
     return _pool
 
 
-# ==============================
-# CHECK BLOCK STATUS
-# ==============================
+async def upsert_user(telegram_id, username=None, first_name=None):
 
-async def is_blocked(telegram_id: int) -> bool:
+    inserted = await pool().fetchval(
+        """
+        INSERT INTO users (telegram_id, username, first_name)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (telegram_id) DO NOTHING
+        RETURNING TRUE
+        """,
+        telegram_id, username, first_name
+    )
+
+    if inserted:
+        return True
+
+    await pool().execute(
+        """
+        UPDATE users
+        SET username = COALESCE($2, username),
+            first_name = COALESCE($3, first_name),
+            last_seen = NOW()
+        WHERE telegram_id = $1
+        """,
+        telegram_id, username, first_name
+    )
+
+    return False
+
+
+async def get_user(telegram_id):
+
+    return await pool().fetchrow(
+        "SELECT * FROM users WHERE telegram_id = $1",
+        telegram_id
+    )
+
+
+async def set_language(telegram_id, language):
+
+    if language not in ("bn", "en"):
+        raise ValueError("Unsupported language.")
+
+    await pool().execute(
+        """
+        INSERT INTO users (telegram_id, language)
+        VALUES ($1, $2)
+        ON CONFLICT (telegram_id)
+        DO UPDATE SET language = EXCLUDED.language
+        """,
+        telegram_id, language
+    )
+
+
+async def is_blocked(telegram_id):
 
     result = await pool().fetchval(
         """
@@ -122,26 +160,16 @@ async def is_blocked(telegram_id: int) -> bool:
     return bool(result)
 
 
-# ==============================
-# BLOCK / UNBLOCK USER
-# ==============================
-
-async def set_blocked(
-    telegram_id: int,
-    blocked: bool
-):
+async def set_blocked(telegram_id, blocked):
 
     await pool().execute(
         """
         INSERT INTO users (telegram_id, is_blocked)
         VALUES ($1, $2)
-
         ON CONFLICT (telegram_id)
-        DO UPDATE SET
-            is_blocked = EXCLUDED.is_blocked
+        DO UPDATE SET is_blocked = EXCLUDED.is_blocked
         """,
-        telegram_id,
-        blocked
+        telegram_id, blocked
     )
 
     await log_action(
@@ -150,51 +178,30 @@ async def set_blocked(
     )
 
 
-# ==============================
-# GET ALL USER IDS
-# ==============================
-
 async def all_user_ids():
 
     rows = await pool().fetch(
         """
         SELECT telegram_id
         FROM users
+        WHERE is_blocked = FALSE
         ORDER BY created_at DESC
         """
     )
 
-    return [
-        row["telegram_id"]
-        for row in rows
-    ]
+    return [row["telegram_id"] for row in rows]
 
-
-# ==============================
-# TOTAL USER COUNT
-# ==============================
 
 async def user_count():
 
     count = await pool().fetchval(
-        """
-        SELECT COUNT(*)
-        FROM users
-        """
+        "SELECT COUNT(*) FROM users"
     )
 
     return count or 0
 
 
-# ==============================
-# ACTIVITY LOG
-# ==============================
-
-async def log_action(
-    telegram_id,
-    action,
-    details=None
-):
+async def log_action(telegram_id, action, details=None):
 
     await pool().execute(
         """
@@ -202,7 +209,5 @@ async def log_action(
         (telegram_id, action, details)
         VALUES ($1, $2, $3)
         """,
-        telegram_id,
-        action,
-        details
-)
+        telegram_id, action, details
+    )

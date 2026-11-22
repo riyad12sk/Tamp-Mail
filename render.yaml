@@ -1,0 +1,48 @@
+databases:
+  - name: tempmail-postgres
+    plan: basic-256mb
+    databaseName: tempmailbot
+    user: tempmail_user
+
+services:
+  - type: worker
+    name: tempmail-telegram-bot
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tempmail-postgres
+          property: connectionString
+      - key: ADMIN_IDS
+        sync: false
+      - key: TEMPMAIL_API_BASE
+        value: https://api.internal.temp-mail.io/api/v3
+      - key: INBOX_POLL_SECONDS
+        value: "10"
+      - key: MAX_EMAILS_PER_USER
+        value: "5"
+      - key: LOG_LEVEL
+        value: INFO
+
+  - type: web
+    name: tempmail-admin-dashboard
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn dashboard.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tempmail-postgres
+          property: connectionString
+      - key: DASHBOARD_USERNAME
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true

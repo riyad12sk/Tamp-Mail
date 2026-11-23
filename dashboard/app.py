@@ -5,18 +5,29 @@ from collections import defaultdict, deque
 
 import asyncpg
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from config import settings
 
-app = FastAPI(title="Temp Mail Admin")
+app = FastAPI(title="Tamp-Mail Admin")
 templates = Jinja2Templates(directory="dashboard/templates")
 pool = None
 _login_attempts = defaultdict(deque)
 MAX_ATTEMPTS = 5
 WINDOW_SECONDS = 300
+
+# Starlette middleware must be registered before the application starts.
+# A temporary random value allows module import; startup rejects missing config.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.secret_key or secrets.token_urlsafe(32),
+    session_cookie="tempmail_admin_session",
+    max_age=60 * 60 * 8,
+    same_site="lax",
+    https_only=settings.dashboard_cookie_secure,
+)
 
 
 @app.on_event("startup")
@@ -34,14 +45,6 @@ async def startup():
         raise RuntimeError("Missing required dashboard environment variables: " + ", ".join(missing))
     if len(settings.secret_key) < 32:
         raise RuntimeError("SECRET_KEY must contain at least 32 characters.")
-    app.add_middleware(
-        SessionMiddleware,
-        secret_key=settings.secret_key,
-        session_cookie="tempmail_admin_session",
-        max_age=60 * 60 * 8,
-        same_site="lax",
-        https_only=settings.dashboard_cookie_secure,
-    )
     pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=3)
 
 
@@ -84,6 +87,8 @@ def login_limited(request: Request):
 async def home(request: Request):
     if not logged_in(request):
         return RedirectResponse("/login", status_code=303)
+    if pool is None:
+        return HTMLResponse("Dashboard database is unavailable.", status_code=503)
     users = await pool.fetchval("SELECT COUNT(*) FROM users")
     emails = await pool.fetchval("SELECT COUNT(*) FROM email_accounts")
     messages = await pool.fetchval("SELECT COUNT(*) FROM messages")
@@ -136,4 +141,10 @@ async def logout(request: Request, csrf: str = Form(...)):
 
 @app.get("/health")
 async def health():
+    if pool is None:
+        return JSONResponse({"status": "unavailable"}, status_code=503)
+    try:
+        await pool.fetchval("SELECT 1")
+    except Exception:
+        return JSONResponse({"status": "unavailable"}, status_code=503)
     return {"status": "ok"}

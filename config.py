@@ -1,4 +1,3 @@
-
 import os
 from dataclasses import dataclass
 from dotenv import load_dotenv
@@ -13,11 +12,16 @@ def read_int(name, default, minimum=1):
         return default
 
 
+def read_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
-
     bot_token: str = os.getenv("BOT_TOKEN", "")
-
     database_url: str = os.getenv("DATABASE_URL", "")
 
     admin_ids: tuple = tuple(
@@ -26,38 +30,21 @@ class Settings:
         if x.strip().isdigit()
     )
 
-    admin_username: str = os.getenv(
-        "DASHBOARD_USERNAME", "admin"
-    )
-
-    admin_password: str = os.getenv(
-        "DASHBOARD_PASSWORD", ""
-    )
-
-    secret_key: str = os.getenv(
-        "SECRET_KEY", ""
-    )
+    # No default dashboard credentials or signing secret.
+    admin_username: str = os.getenv("DASHBOARD_USERNAME", "")
+    admin_password: str = os.getenv("DASHBOARD_PASSWORD", "")
+    secret_key: str = os.getenv("SECRET_KEY", "")
+    dashboard_cookie_secure: bool = read_bool("DASHBOARD_COOKIE_SECURE", True)
 
     tempmail_api_base: str = os.getenv(
         "TEMPMAIL_API_BASE",
         "https://api.internal.temp-mail.io/api/v3"
     )
 
-    inbox_poll_seconds: int = read_int(
-        "INBOX_POLL_SECONDS", 10, 10
-    )
-
-    max_emails_per_user: int = read_int(
-        "MAX_EMAILS_PER_USER", 5, 1
-    )
-
-    log_level: str = os.getenv(
-        "LOG_LEVEL", "INFO"
-    )
-
-    app_timezone: str = os.getenv(
-        "APP_TIMEZONE", "UTC"
-    )
+    inbox_poll_seconds: int = read_int("INBOX_POLL_SECONDS", 10, 10)
+    max_emails_per_user: int = read_int("MAX_EMAILS_PER_USER", 5, 1)
+    log_level: str = os.getenv("LOG_LEVEL", "INFO")
+    app_timezone: str = os.getenv("APP_TIMEZONE", "UTC")
 
 
 settings = Settings()

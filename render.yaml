@@ -46,3 +46,5 @@ services:
         sync: false
       - key: SECRET_KEY
         generateValue: true
+      - key: DASHBOARD_COOKIE_SECURE
+        value: "true"

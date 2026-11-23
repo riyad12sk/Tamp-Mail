@@ -1,44 +1,56 @@
-# TempMailBot — Advanced Edition
+# Tamp-Mail
 
-GitHub + Render deployment-এর জন্য প্রস্তুত Python Telegram bot ও browser admin dashboard।
+Python Telegram bot and browser admin dashboard.
 
-## গুরুত্বপূর্ণ নিরাপত্তা
-- আগের চ্যাটে প্রকাশিত Telegram Bot Token-টি BotFather থেকে revoke করে নতুন token নিন।
-- `.env` কখনো GitHub-এ upload করবেন না।
-- Bot token, PostgreSQL URL, dashboard password এবং SECRET_KEY শুধু Render-এর Environment Variables-এ রাখুন।
-- অজানা/অননুমোদিত সাইটে এই বটের inbox ব্যবহার করবেন না। Temp email-এ গুরুত্বপূর্ণ বা ব্যক্তিগত তথ্য গ্রহণ করবেন না।
+## Security and environment
 
-## GitHub-এ Upload
-এই ZIP extract করে এর ভেতরের সব ফাইল `Tamp-Mail` repository-র root-এ upload করুন। `.env` upload করবেন না।
+Never commit `.env`, bot tokens, database URLs, passwords, or signing keys.
+If a Telegram bot token was ever exposed in chat, terminal history, logs, or Git history, revoke it with BotFather and set a fresh `BOT_TOKEN` in your hosting environment.
 
-## Render Deployment
-`render.yaml` Blueprint ব্যবহার করে deploy করুন। Render Dashboard-এ New > Blueprint এবং GitHub repository নির্বাচন করুন।
-Blueprint-এর Database plan ও service plan আপনার Render account-এর বর্তমান pricing/availability অনুযায়ী নির্বাচন করুন। `starter` worker/web paid plan; free plan-এ always-on background worker পাওয়া যায় না।
+Required environment variables:
 
-Environment Variables:
-- `BOT_TOKEN`: BotFather থেকে নতুন token
-- `ADMIN_IDS`: আপনার Telegram numeric user ID; একাধিক হলে comma-separated
-- `DASHBOARD_USERNAME`: dashboard login username
-- `DASHBOARD_PASSWORD`: শক্তিশালী, অনন্য password
-- `SECRET_KEY`: দীর্ঘ random secret
-- `DATABASE_URL`: Render PostgreSQL connection string (Blueprint auto-link করে)
+- `BOT_TOKEN`: Telegram bot token
+- `DATABASE_URL`: PostgreSQL connection string
+- `ADMIN_IDS`: comma-separated numeric Telegram admin IDs
+- `DASHBOARD_USERNAME`: dashboard login name
+- `DASHBOARD_PASSWORD`: unique strong dashboard password
+- `SECRET_KEY`: random secret with at least 32 characters
+- `DASHBOARD_COOKIE_SECURE`: `true` when served over HTTPS (recommended)
+- `TEMPMAIL_API_BASE`: provider API base URL
+- `INBOX_POLL_SECONDS`: monitor interval (minimum 10 seconds)
+- `MAX_EMAILS_PER_USER`: application account limit
 
-## Deploy-এর পরে
-1. Worker logs-এ `Starting Telegram bot polling` দেখুন।
-2. Bot-এ `/start` পাঠান।
-3. `/admin` দিয়ে Telegram admin summary দেখুন।
-4. Web service URL খুলে dashboard login করুন।
-5. `/health` endpoint-এ `{"status":"ok"}` পাওয়া উচিত।
+The dashboard fails startup if its database or authentication secrets are missing. Login has a basic per-process attempt limit, session cookies are HTTP-only (Starlette default), SameSite=Lax, and logout/login forms use CSRF tokens. Use HTTPS and a strong password. The in-memory login throttle resets when the web process restarts and is not a substitute for an upstream rate limiter.
 
-## Temp Mail provider caveat
-এই project-এ আপনার দেওয়া `api.internal.temp-mail.io` API pattern adapter হিসেবে রাখা হয়েছে। এটি internal/unofficial endpoint হতে পারে; availability, authentication, message schema বা service terms বদলাতে পারে। Production launch-এর আগে provider-এর অনুমোদিত ও প্রকাশিত API documentation/terms যাচাই করুন। API unavailable হলে `TEMPMAIL_API_BASE`-এ documented provider endpoint বসিয়ে `services/tempmail.py`-এর request/response mapping সেই অনুযায়ী পরিবর্তন করতে হবে।
+## Deploy with Render
 
-## Feature notes
-- 10-second polling is a requested interval; the monitor polls active inboxes sequentially and is suitable only for small test deployments. Many mailboxes can create high API traffic and provider rate-limit issues.
-- Delete deactivates the address inside this bot. It does not claim to delete the remote provider mailbox because the supplied API flow does not document a remote-delete endpoint.
-- Admin web dashboard is password-protected and uses session cookies. Use HTTPS (Render provides it), a strong password and a unique SECRET_KEY.
-- The database schema is initialized automatically at service startup.
-- Email content is untrusted input. Do not open links or attachments from unknown senders.
+1. Connect this repository to Render and deploy the Blueprint in `render.yaml`.
+2. Set `BOT_TOKEN` and `ADMIN_IDS` for the worker.
+3. Set unique `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` for the dashboard.
+4. Render generates `SECRET_KEY`; keep `DASHBOARD_COOKIE_SECURE=true` when using the HTTPS service URL.
+5. Check worker logs and open the dashboard service URL.
 
-## Local development (optional)
-Install requirements, set environment variables, then run `python main.py`. Dashboard: `uvicorn dashboard.app:app --host 0.0.0.0 --port 8000`.
+Review the current Render pricing and service availability before deploying; the service plans in the Blueprint may incur charges.
+
+## Provider compatibility
+
+The email provider adapter in `services/tempmail.py` uses a specific API path and response shape. The endpoint shown in the default configuration may be internal, unofficial, change without notice, or unavailable. Confirm you have permission to use the provider and consult its current official documentation before deployment. Do not assume the adapter is compatible with another provider without adapting and testing its documented API.
+
+## Operational limitations
+
+- Inbox polling is sequential and limited to a batch of 100 active accounts per cycle. It is intended for small-scale testing, not high-volume production.
+- The monitor respects `INBOX_POLL_SECONDS` and isolates failures per mailbox.
+- Deleting an address in the bot deactivates its local record; it does not prove the remote provider mailbox has been deleted.
+- Email bodies and sender details are untrusted content. Treat links and attachments cautiously.
+- Database initialization runs when the bot starts. Back up PostgreSQL regularly.
+
+## Local development
+
+Install dependencies from `requirements.txt`, configure environment variables, then run:
+
+```bash
+python main.py
+uvicorn dashboard.app:app --host 127.0.0.1 --port 8000
+```
+
+For local HTTP-only testing, set `DASHBOARD_COOKIE_SECURE=false` in the local environment. Do not use that setting on a public HTTPS deployment.

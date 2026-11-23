@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import logging
 
+from config import settings
 from database.db import pool
 from services.tempmail import client, TempMailError
 from utils import esc, DIVIDER
@@ -10,8 +11,8 @@ log = logging.getLogger(__name__)
 
 
 async def inbox_monitor(app):
-    # Poll active mailboxes at the configured interval. For large deployments,
-    # replace per-mailbox polling with a provider webhook or a queued scheduler.
+    """Poll a bounded batch of active accounts and isolate per-account errors."""
+    interval = max(10, settings.inbox_poll_seconds)
     while True:
         try:
             accounts = await pool().fetch(
@@ -23,12 +24,19 @@ async def inbox_monitor(app):
             for account in accounts:
                 try:
                     items = await client.messages(account["email"], account["api_token"])
+                    if not isinstance(items, list):
+                        log.warning("Provider returned a non-list inbox for account %s", account["id"])
+                        continue
                     for item in items[:10]:
+                        if not isinstance(item, dict):
+                            continue
                         ext_id = str(item.get("id") or item.get("message_id") or item.get("mail_id") or "")
                         if not ext_id:
                             ext_id = hashlib.sha256(
-                                repr((item.get("from"), item.get("subject"), item.get("date"),
-                                      item.get("body_text") or item.get("body"))).encode()
+                                repr((
+                                    item.get("from"), item.get("subject"), item.get("date"),
+                                    item.get("body_text") or item.get("body")
+                                )).encode("utf-8", errors="replace")
                             ).hexdigest()
                         status = await pool().execute(
                             """
@@ -54,12 +62,15 @@ async def inbox_monitor(app):
                                     parse_mode="HTML",
                                 )
                             except Exception:
-                                # User may have blocked the bot - don't let that
-                                # stop the rest of this batch from processing.
                                 log.warning("Could not notify user %s of new mail.", account["telegram_id"])
                 except TempMailError as exc:
                     log.warning("Inbox poll failed for account %s: %s", account["id"], exc)
+                except Exception:
+                    log.exception("Unexpected monitor error for account %s", account["id"])
                 await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            log.info("Inbox monitor task cancelled.")
+            raise
         except Exception:
             log.exception("Inbox monitor iteration failed")
-        await asyncio.sleep(10)
+        await asyncio.sleep(interval)

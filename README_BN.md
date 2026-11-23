@@ -1,56 +1,52 @@
-# Tamp-Mail
+# Tamp-Mail — নিরাপত্তা ও Dashboard নোট
 
-Python Telegram bot and browser admin dashboard.
+এই রিপোজিটরিতে Telegram bot code এবং browser admin dashboard রয়েছে। Dashboard-এর নিরাপত্তা ও কনফিগারেশন আলাদা করে যাচাই করা উচিত।
 
-## Security and environment
+## গোপন তথ্য
 
-Never commit `.env`, bot tokens, database URLs, passwords, or signing keys.
-If a Telegram bot token was ever exposed in chat, terminal history, logs, or Git history, revoke it with BotFather and set a fresh `BOT_TOKEN` in your hosting environment.
+- বাস্তব Bot Token, Admin ID, database URL, password বা signing key GitHub-এ commit করবেন না।
+- কোনো token chat, terminal history, log বা Git history-তে প্রকাশিত হলে BotFather থেকে সেটি revoke করে নতুন token ব্যবহার করুন।
+- `.env` স্থানীয় মেশিনে রাখুন; `.gitignore` এটি commit হওয়া থেকে আটকায়।
+- `.env.example`-এ কেবল placeholder আছে; সেটি কপি করে বাস্তব secret GitHub-এ commit করবেন না।
 
-Required environment variables:
+## Dashboard-এর প্রয়োজনীয় environment variables
 
-- `BOT_TOKEN`: Telegram bot token
 - `DATABASE_URL`: PostgreSQL connection string
-- `ADMIN_IDS`: comma-separated numeric Telegram admin IDs
-- `DASHBOARD_USERNAME`: dashboard login name
-- `DASHBOARD_PASSWORD`: unique strong dashboard password
-- `SECRET_KEY`: random secret with at least 32 characters
-- `DASHBOARD_COOKIE_SECURE`: `true` when served over HTTPS (recommended)
-- `TEMPMAIL_API_BASE`: provider API base URL
-- `INBOX_POLL_SECONDS`: monitor interval (minimum 10 seconds)
-- `MAX_EMAILS_PER_USER`: application account limit
+- `DASHBOARD_USERNAME`: Dashboard login username
+- `DASHBOARD_PASSWORD`: দীর্ঘ ও অনন্য password
+- `SECRET_KEY`: কমপক্ষে ৩২ অক্ষরের random signing secret
+- `DASHBOARD_COOKIE_SECURE`: HTTPS deployment-এ `true`; local HTTP test-এ `false`
 
-The dashboard fails startup if its database or authentication secrets are missing. Login has a basic per-process attempt limit, session cookies are HTTP-only (Starlette default), SameSite=Lax, and logout/login forms use CSRF tokens. Use HTTPS and a strong password. The in-memory login throttle resets when the web process restarts and is not a substitute for an upstream rate limiter.
+Dashboard startup-এর সময় প্রয়োজনীয় variable অনুপস্থিত থাকলে বা `SECRET_KEY` ছোট হলে startup বন্ধ হবে। Session cookie HTTP-only, SameSite=Lax এবং configurable Secure flag ব্যবহার করে। Login ও logout form-এ CSRF token আছে। Response-এ basic security headers এবং no-store cache policy দেওয়া হয়।
 
-## Deploy with Render
+Login attempt limiter process-local এবং সীমিত আকারের; service restart হলে এর state reset হয়। এটি shared/distributed rate limiter নয় এবং upstream protection-এর বিকল্প নয়।
 
-1. Connect this repository to Render and deploy the Blueprint in `render.yaml`.
-2. Set `BOT_TOKEN` and `ADMIN_IDS` for the worker.
-3. Set unique `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` for the dashboard.
-4. Render generates `SECRET_KEY`; keep `DASHBOARD_COOKIE_SECURE=true` when using the HTTPS service URL.
-5. Check worker logs and open the dashboard service URL.
+## Database সামঞ্জস্য
 
-Review the current Render pricing and service availability before deploying; the service plans in the Blueprint may incur charges.
+Dashboard যে `users`, `email_accounts`, `messages` এবং `activity_logs` table query করে, সেগুলোর সংজ্ঞা `database/db.py`-এর schema-তে রয়েছে। Dashboard চালানোর আগে নিশ্চিত করুন PostgreSQL-এ schema তৈরি হয়েছে এবং database user প্রয়োজনীয় read permission পেয়েছে।
 
-## Provider compatibility
+## Health check
 
-The email provider adapter in `services/tempmail.py` uses a specific API path and response shape. The endpoint shown in the default configuration may be internal, unofficial, change without notice, or unavailable. Confirm you have permission to use the provider and consult its current official documentation before deployment. Do not assume the adapter is compatible with another provider without adapting and testing its documented API.
+Dashboard-এর `/health` endpoint database connection-এ `SELECT 1` চালায়। সফল হলে `{"status":"ok"}` ফেরত দেয়; database unavailable হলে HTTP 503 ফেরত দেয়।
 
-## Operational limitations
+## Render সম্পর্কে সতর্কতা
 
-- Inbox polling is sequential and limited to a batch of 100 active accounts per cycle. It is intended for small-scale testing, not high-volume production.
-- The monitor respects `INBOX_POLL_SECONDS` and isolates failures per mailbox.
-- Deleting an address in the bot deactivates its local record; it does not prove the remote provider mailbox has been deleted.
-- Email bodies and sender details are untrusted content. Treat links and attachments cautiously.
-- Database initialization runs when the bot starts. Back up PostgreSQL regularly.
+বর্তমান `render.yaml`-এ একটি Telegram worker এবং একটি web dashboard service দুটোই সংজ্ঞায়িত আছে। Blueprint deploy করলে worker-টিও চালু হতে পারে। তাই শুধু Dashboard পরীক্ষা করতে চাইলে এই Blueprint deploy করবেন না; আগে worker-সহ সম্পূর্ণ architecture ও অনুমোদিত email-testing scope আলাদাভাবে পর্যালোচনা করতে হবে।
 
-## Local development
+Render-এর service plan এবং PostgreSQL plan-এ খরচ হতে পারে। Deploy করার আগে Render dashboard-এ বর্তমান মূল্য ও resource availability যাচাই করুন।
 
-Install dependencies from `requirements.txt`, configure environment variables, then run:
+## স্থানীয় Dashboard পরীক্ষা
+
+Python environment-এ `requirements.txt` install করে প্রয়োজনীয় Dashboard environment variables সেট করুন। Local HTTP পরীক্ষার সময়:
 
 ```bash
-python main.py
+DASHBOARD_COOKIE_SECURE=false
+```
+
+তারপর Dashboard চালু করুন:
+
+```bash
 uvicorn dashboard.app:app --host 127.0.0.1 --port 8000
 ```
 
-For local HTTP-only testing, set `DASHBOARD_COOKIE_SECURE=false` in the local environment. Do not use that setting on a public HTTPS deployment.
+Browser-এ `http://127.0.0.1:8000/health` খুলে health status দেখুন। Public deployment-এ HTTPS ব্যবহার করুন এবং `DASHBOARD_COOKIE_SECURE=true` রাখুন।

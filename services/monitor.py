@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import logging
 
+from config import settings
 from database.db import pool
 from services.tempmail import client, TempMailError
 from utils import esc, DIVIDER
@@ -10,14 +11,14 @@ log = logging.getLogger(__name__)
 
 
 async def inbox_monitor(app):
-    # Poll active mailboxes at the configured interval. For large deployments,
-    # replace per-mailbox polling with a provider webhook or a queued scheduler.
+    # Poll every active mailbox. For large deployments, use provider webhooks
+    # or a queued scheduler rather than frequent sequential polling.
     while True:
         try:
             accounts = await pool().fetch(
                 """
                 SELECT id,telegram_id,email,api_token FROM email_accounts
-                WHERE is_active=TRUE ORDER BY id DESC LIMIT 100
+                WHERE is_active=TRUE ORDER BY id ASC
                 """
             )
             for account in accounts:
@@ -54,12 +55,10 @@ async def inbox_monitor(app):
                                     parse_mode="HTML",
                                 )
                             except Exception:
-                                # User may have blocked the bot - don't let that
-                                # stop the rest of this batch from processing.
                                 log.warning("Could not notify user %s of new mail.", account["telegram_id"])
                 except TempMailError as exc:
                     log.warning("Inbox poll failed for account %s: %s", account["id"], exc)
                 await asyncio.sleep(0.2)
         except Exception:
             log.exception("Inbox monitor iteration failed")
-        await asyncio.sleep(10)
+        await asyncio.sleep(settings.inbox_poll_seconds)

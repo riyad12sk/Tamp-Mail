@@ -258,6 +258,11 @@ def main():
     intentional stop (e.g. Render sending SIGTERM during a deploy) makes
     run_polling() return normally, which simply ends the loop.
     """
+    if not settings.bot_token:
+        raise RuntimeError(
+            "BOT_TOKEN is missing. Set it in Render Environment Variables."
+        )
+
     backoff = 5
     while True:
         try:
